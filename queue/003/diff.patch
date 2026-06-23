@@ -1,0 +1,41 @@
+diff --git a/src/local_rag/config.py b/src/local_rag/config.py
+new file mode 100644
+index 0000000..32e2713
+--- /dev/null
++++ b/src/local_rag/config.py
+@@ -0,0 +1,35 @@
++"""Configuration loading from a simple TOML or dict."""
++
++from __future__ import annotations
++
++import json
++from dataclasses import dataclass
++from pathlib import Path
++
++
++@dataclass
++class Config:
++    chunk_size: int = 512
++    overlap: int = 64
++    top_k: int = 5
++    embedder: str = "hash"          # "hash" | "sentence-transformers"
++    embedder_model: str = "all-MiniLM-L6-v2"
++    llm_backend: str = "mock"       # "mock" | "ollama"
++    ollama_model: str = "llama3"
++    ollama_host: str = "http://localhost:11434"
++    store_path: str = ".lra/store.pkl"
++
++    @classmethod
++    def from_dict(cls, d: dict) -> Config:
++        valid = {f for f in cls.__dataclass_fields__}
++        filtered = {k: v for k, v in d.items() if k in valid}
++        return cls(**filtered)
++
++    @classmethod
++    def from_json(cls, path: str | Path) -> Config:
++        data = json.loads(Path(path).read_text(encoding="utf-8"))
++        return cls.from_dict(data)
++
++    def to_dict(self) -> dict:
++        import dataclasses
++        return dataclasses.asdict(self)

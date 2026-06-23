@@ -74,3 +74,6 @@ dmypy.json
 cython_debug/
 .lra/
 *.pkl
+
+# drip scratch
+.drip/_*

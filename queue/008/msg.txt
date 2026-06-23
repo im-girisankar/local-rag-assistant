@@ -1,0 +1,3 @@
+Add vector_store module
+
+(part of m2 milestone work)

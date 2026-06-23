@@ -1,0 +1,77 @@
+diff --git a/src/local_rag/ingestion.py b/src/local_rag/ingestion.py
+new file mode 100644
+index 0000000..c9f3c27
+--- /dev/null
++++ b/src/local_rag/ingestion.py
+@@ -0,0 +1,71 @@
++"""File ingestion: read .txt / .md files and split into text chunks."""
++
++from __future__ import annotations
++
++import re
++from dataclasses import dataclass, field
++from pathlib import Path
++
++
++@dataclass
++class Chunk:
++    """A piece of text with provenance metadata."""
++
++    chunk_id: str
++    source: str          # file path or label
++    text: str
++    start_char: int = 0
++    metadata: dict = field(default_factory=dict)
++
++
++def _split_text(text: str, chunk_size: int = 512, overlap: int = 64) -> list[tuple[int, str]]:
++    """Split *text* into overlapping windows. Returns (start_char, window) pairs."""
++    if chunk_size <= 0:
++        raise ValueError("chunk_size must be > 0")
++    if overlap < 0:
++        raise ValueError("overlap must be >= 0")
++    if overlap >= chunk_size:
++        raise ValueError("overlap must be < chunk_size")
++    if not text:
++        return []
++    chunks: list[tuple[int, str]] = []
++    start = 0
++    step = max(1, chunk_size - overlap)
++    while start < len(text):
++        end = min(start + chunk_size, len(text))
++        chunks.append((start, text[start:end]))
++        if end == len(text):
++            break
++        start += step
++    return chunks
++
++
++def ingest_file(path: str | Path, chunk_size: int = 512, overlap: int = 64) -> list[Chunk]:
++    """Read a .txt or .md file and return a list of Chunk objects."""
++    path = Path(path)
++    if not path.exists():
++        raise FileNotFoundError(f"File not found: {path}")
++    suffix = path.suffix.lower()
++    if suffix not in {".txt", ".md"}:
++        raise ValueError(f"Unsupported file type: {suffix!r}. Only .txt and .md are supported.")
++    raw = path.read_text(encoding="utf-8")
++    # Normalise whitespace but keep paragraph structure
++    text = re.sub(r"\r\n", "\n", raw)
++    windows = _split_text(text, chunk_size=chunk_size, overlap=overlap)
++    chunks = []
++    for i, (start, window) in enumerate(windows):
++        chunk_id = f"{path.as_posix()}__{i}"
++        chunks.append(Chunk(chunk_id=chunk_id, source=str(path), text=window, start_char=start))
++    return chunks
++
++
++def ingest_directory(directory: str | Path, chunk_size: int = 512, overlap: int = 64) -> list[Chunk]:
++    """Recursively ingest all .txt and .md files in *directory*."""
++    directory = Path(directory)
++    if not directory.is_dir():
++        raise NotADirectoryError(f"Not a directory: {directory}")
++    all_chunks: list[Chunk] = []
++    for filepath in sorted(directory.rglob("*")):
++        if filepath.is_file() and filepath.suffix.lower() in {".txt", ".md"}:
++            all_chunks.extend(ingest_file(filepath, chunk_size=chunk_size, overlap=overlap))
++    return all_chunks

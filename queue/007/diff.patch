@@ -1,0 +1,76 @@
+diff --git a/src/local_rag/pipeline.py b/src/local_rag/pipeline.py
+new file mode 100644
+index 0000000..751f88b
+--- /dev/null
++++ b/src/local_rag/pipeline.py
+@@ -0,0 +1,70 @@
++"""RAG pipeline: retrieve relevant chunks and produce a cited answer."""
++
++from __future__ import annotations
++
++from dataclasses import dataclass
++
++from local_rag.embedder import Embedder, HashEmbedder
++from local_rag.ingestion import Chunk, ingest_file
++from local_rag.llm import LLM, MockLLM
++from local_rag.vector_store import SearchResult, VectorStore
++
++_PROMPT_TEMPLATE = """\
++You are a helpful assistant. Use ONLY the following context to answer the question.
++For each fact you use, cite the source chunk id in square brackets like [chunk_id].
++If the context does not contain the answer, say "I don't know based on the provided documents."
++
++Context:
++{context}
++
++Question: {question}
++
++Answer:"""
++
++
++@dataclass
++class RAGAnswer:
++    answer: str
++    sources: list[SearchResult]
++
++
++class RAGPipeline:
++    """End-to-end RAG: ingest â†’ embed â†’ store â†’ retrieve â†’ generate."""
++
++    def __init__(
++        self,
++        embedder: Embedder | None = None,
++        llm: LLM | None = None,
++        top_k: int = 5,
++    ) -> None:
++        self.embedder: Embedder = embedder or HashEmbedder()
++        self.llm: LLM = llm or MockLLM()
++        self.top_k = top_k
++        self.store = VectorStore()
++
++    def ingest(self, chunks: list[Chunk]) -> None:
++        """Embed and store a list of chunks."""
++        if not chunks:
++            return
++        embeddings = self.embedder.embed([c.text for c in chunks])
++        self.store.add(chunks, embeddings)
++
++    def ingest_file(self, path: str, chunk_size: int = 512, overlap: int = 64) -> int:
++        """Convenience: ingest a single file. Returns number of chunks added."""
++        chunks = ingest_file(path, chunk_size=chunk_size, overlap=overlap)
++        self.ingest(chunks)
++        return len(chunks)
++
++    def ask(self, question: str) -> RAGAnswer:
++        """Retrieve relevant chunks and generate a cited answer."""
++        query_vec = self.embedder.embed([question])[0]
++        results = self.store.search(query_vec, top_k=self.top_k)
++        if not results:
++            return RAGAnswer(answer="No documents ingested yet.", sources=[])
++        context_parts = []
++        for r in results:
++            context_parts.append(f"[{r.chunk_id}] (source: {r.source})\n{r.text}")
++        context = "\n\n".join(context_parts)
++        prompt = _PROMPT_TEMPLATE.format(context=context, question=question)
++        answer = self.llm.generate(prompt)
++        return RAGAnswer(answer=answer, sources=results)

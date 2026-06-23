@@ -1,0 +1,54 @@
+diff --git a/src/local_rag/llm.py b/src/local_rag/llm.py
+new file mode 100644
+index 0000000..208055f
+--- /dev/null
++++ b/src/local_rag/llm.py
+@@ -0,0 +1,48 @@
++"""LLM interface: injectable mock + lazy Ollama backend."""
++
++from __future__ import annotations
++
++from typing import Protocol, runtime_checkable
++
++
++@runtime_checkable
++class LLM(Protocol):
++    """Minimal LLM interface: given a prompt, return a string response."""
++
++    def generate(self, prompt: str) -> str:
++        ...
++
++
++class MockLLM:
++    """Deterministic mock LLM for testing â€” no network, no GPU."""
++
++    def __init__(self, response: str = "Mock answer.") -> None:
++        self._response = response
++        self.last_prompt: str = ""
++
++    def generate(self, prompt: str) -> str:
++        self.last_prompt = prompt
++        return self._response
++
++
++class OllamaLLM:
++    """Lazy wrapper around the `ollama` Python SDK.
++
++    The `ollama` package is imported only when `generate()` is first called.
++    """
++
++    def __init__(self, model: str = "llama3", host: str = "http://localhost:11434") -> None:
++        self.model = model
++        self.host = host
++        self._client = None
++
++    def _load(self):
++        if self._client is None:
++            ollama = __import__("ollama")
++            self._client = ollama.Client(host=self.host)
++        return self._client
++
++    def generate(self, prompt: str) -> str:
++        client = self._load()
++        response = client.generate(model=self.model, prompt=prompt)
++        return response["response"]

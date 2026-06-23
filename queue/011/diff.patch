@@ -1,0 +1,28 @@
+diff --git a/tests/test_llm.py b/tests/test_llm.py
+new file mode 100644
+index 0000000..3d7ae23
+--- /dev/null
++++ b/tests/test_llm.py
+@@ -0,0 +1,22 @@
++"""Tests for the LLM interface."""
++
++
++def test_mock_llm_returns_response():
++    from local_rag.llm import MockLLM
++    llm = MockLLM(response="42")
++    assert llm.generate("what is life?") == "42"
++
++
++def test_mock_llm_records_prompt():
++    from local_rag.llm import MockLLM
++    llm = MockLLM()
++    llm.generate("my question")
++    assert "my question" in llm.last_prompt
++
++
++def test_ollama_llm_lazy_import():
++    """OllamaLLM should be importable without ollama installed."""
++    from local_rag.llm import OllamaLLM
++    llm = OllamaLLM()
++    assert llm.model == "llama3"
++    # Do NOT call .generate() â€” that would require the server

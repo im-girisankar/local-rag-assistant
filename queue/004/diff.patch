@@ -1,0 +1,83 @@
+diff --git a/src/local_rag/embedder.py b/src/local_rag/embedder.py
+new file mode 100644
+index 0000000..8fadb09
+--- /dev/null
++++ b/src/local_rag/embedder.py
+@@ -0,0 +1,77 @@
++"""Embedding interface with a deterministic hashing fallback (no external deps)."""
++
++from __future__ import annotations
++
++import math
++from typing import Protocol, runtime_checkable
++
++
++@runtime_checkable
++class Embedder(Protocol):
++    """Any object that can embed a list of strings into float vectors."""
++
++    dim: int
++
++    def embed(self, texts: list[str]) -> list[list[float]]:
++        ...
++
++
++class HashEmbedder:
++    """Deterministic bag-of-words hashing embedder â€” zero external deps.
++
++    Tokenises text into lowercase words, hashes each token to a bucket
++    in a *dim*-dimensional vector (TF-hashing / feature hashing), then
++    L2-normalises. Passages that share vocabulary with a query will have
++    higher cosine similarity than completely unrelated passages.
++    """
++
++    def __init__(self, dim: int = 128) -> None:
++        self.dim = dim
++
++    def embed(self, texts: list[str]) -> list[list[float]]:
++        results = []
++        for text in texts:
++            vec = self._hash_to_vec(text)
++            results.append(vec)
++        return results
++
++    def _hash_to_vec(self, text: str) -> list[float]:
++        # Tokenise: lowercase and split on whitespace
++        tokens = text.lower().split()
++        vec = [0.0] * self.dim
++        if not tokens:
++            # Empty text â€” return zero-ish unit vector in first bucket
++            vec[0] = 1.0
++            return vec
++        for token in tokens:
++            # Use Python's built-in hash (seeded per process, but stable within a run).
++            # To make it fully deterministic across processes/runs we derive a bucket
++            # from the sum of byte values â€” simple, zero-dep, and collision-spread.
++            bucket = sum(token.encode("utf-8")) % self.dim
++            vec[bucket] += 1.0
++        norm = math.sqrt(sum(x * x for x in vec)) or 1.0
++        return [x / norm for x in vec]
++
++
++class SentenceTransformerEmbedder:
++    """Lazy wrapper around sentence-transformers.
++
++    Only imported when first used; falls back gracefully if not installed.
++    """
++
++    def __init__(self, model_name: str = "all-MiniLM-L6-v2") -> None:
++        self._model_name = model_name
++        self._model = None
++        self.dim: int = 384  # default for MiniLM; updated after first load
++
++    def _load(self):
++        if self._model is None:
++            st = __import__("sentence_transformers", fromlist=["SentenceTransformer"])
++            self._model = st.SentenceTransformer(self._model_name)
++            self.dim = self._model.get_sentence_embedding_dimension()
++        return self._model
++
++    def embed(self, texts: list[str]) -> list[list[float]]:
++        model = self._load()
++        embeddings = model.encode(texts, convert_to_numpy=True)
++        return [e.tolist() for e in embeddings]

@@ -1,0 +1,88 @@
+diff --git a/src/local_rag/cli.py b/src/local_rag/cli.py
+new file mode 100644
+index 0000000..31670c8
+--- /dev/null
++++ b/src/local_rag/cli.py
+@@ -0,0 +1,82 @@
++"""CLI entry point: lra ingest / lra ask."""
++
++from __future__ import annotations
++
++import argparse
++import sys
++from pathlib import Path
++
++
++def _build_pipeline(config_path: str | None = None):
++    from local_rag.config import Config
++    from local_rag.embedder import HashEmbedder, SentenceTransformerEmbedder
++    from local_rag.llm import MockLLM, OllamaLLM
++    from local_rag.pipeline import RAGPipeline
++    from local_rag.vector_store import VectorStore
++
++    cfg = Config.from_json(config_path) if config_path and Path(config_path).exists() else Config()
++
++    embedder = (
++        SentenceTransformerEmbedder(cfg.embedder_model)
++        if cfg.embedder == "sentence-transformers"
++        else HashEmbedder()
++    )
++    llm = OllamaLLM(cfg.ollama_model, cfg.ollama_host) if cfg.llm_backend == "ollama" else MockLLM()
++    pipeline = RAGPipeline(embedder=embedder, llm=llm, top_k=cfg.top_k)
++
++    store_path = Path(cfg.store_path)
++    if store_path.exists():
++        pipeline.store = VectorStore.load(store_path)
++
++    return pipeline, cfg
++
++
++def cmd_ingest(args):
++    pipeline, cfg = _build_pipeline(args.config)
++    target = Path(args.path)
++    if target.is_dir():
++        from local_rag.ingestion import ingest_directory
++        chunks = ingest_directory(target, cfg.chunk_size, cfg.overlap)
++        pipeline.ingest(chunks)
++        n = len(chunks)
++    else:
++        n = pipeline.ingest_file(args.path, cfg.chunk_size, cfg.overlap)
++    pipeline.store.save(cfg.store_path)
++    print(f"Ingested {n} chunks â†’ {cfg.store_path}")
++
++
++def cmd_ask(args):
++    pipeline, cfg = _build_pipeline(args.config)
++    if len(pipeline.store) == 0:
++        print("No documents in store. Run `lra ingest <path>` first.")
++        sys.exit(1)
++    result = pipeline.ask(args.question)
++    print("\n=== Answer ===")
++    print(result.answer)
++    print("\n=== Sources ===")
++    for s in result.sources:
++        print(f"  [{s.chunk_id}] score={s.score:.3f}  file={s.source}")
++
++
++def main():
++    parser = argparse.ArgumentParser(prog="lra", description="Local RAG Assistant")
++    parser.add_argument("--config", default=None, help="Path to JSON config file")
++    sub = parser.add_subparsers(dest="command")
++
++    p_ingest = sub.add_parser("ingest", help="Ingest files into the vector store")
++    p_ingest.add_argument("path", help="File or directory to ingest")
++    p_ingest.set_defaults(func=cmd_ingest)
++
++    p_ask = sub.add_parser("ask", help="Ask a question")
++    p_ask.add_argument("question", help="Your question")
++    p_ask.set_defaults(func=cmd_ask)
++
++    args = parser.parse_args()
++    if not hasattr(args, "func"):
++        parser.print_help()
++        sys.exit(0)
++    args.func(args)
++
++
++if __name__ == "__main__":
++    main()

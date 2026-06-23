@@ -1,0 +1,91 @@
+diff --git a/tests/test_embedder.py b/tests/test_embedder.py
+new file mode 100644
+index 0000000..8e5c1f8
+--- /dev/null
++++ b/tests/test_embedder.py
+@@ -0,0 +1,85 @@
++"""Tests for the embedding layer."""
++
++import pytest
++
++
++def test_hash_embedder_dim():
++    from local_rag.embedder import HashEmbedder
++    emb = HashEmbedder(dim=64)
++    vecs = emb.embed(["hello"])
++    assert len(vecs) == 1
++    assert len(vecs[0]) == 64
++
++
++def test_hash_embedder_unit_norm():
++    import math
++
++    from local_rag.embedder import HashEmbedder
++    emb = HashEmbedder(dim=128)
++    vec = emb.embed(["test text"])[0]
++    norm = math.sqrt(sum(x * x for x in vec))
++    assert abs(norm - 1.0) < 1e-6
++
++
++def test_hash_embedder_deterministic():
++    from local_rag.embedder import HashEmbedder
++    emb = HashEmbedder()
++    a = emb.embed(["same text"])[0]
++    b = emb.embed(["same text"])[0]
++    assert a == b
++
++
++def test_hash_embedder_different_texts():
++    from local_rag.embedder import HashEmbedder
++    emb = HashEmbedder()
++    a = emb.embed(["text one"])[0]
++    b = emb.embed(["text two"])[0]
++    assert a != b
++
++
++def test_hash_embedder_batch():
++    from local_rag.embedder import HashEmbedder
++    emb = HashEmbedder(dim=32)
++    texts = ["alpha", "beta", "gamma"]
++    vecs = emb.embed(texts)
++    assert len(vecs) == 3
++    assert all(len(v) == 32 for v in vecs)
++
++
++def test_sentence_transformer_embedder_skipped_if_missing():
++    """If sentence-transformers not installed, skip gracefully."""
++    pytest.importorskip("sentence_transformers")
++    from local_rag.embedder import SentenceTransformerEmbedder
++    emb = SentenceTransformerEmbedder()
++    vecs = emb.embed(["hello world"])
++    assert len(vecs) == 1
++    assert len(vecs[0]) > 0
++
++
++# ---------------------------------------------------------------------------
++# Regression test for Fix 4 â€” HashEmbedder lexical similarity
++# ---------------------------------------------------------------------------
++
++def test_hash_embedder_semantic_similarity():
++    """Passages sharing words with the query should score higher cosine similarity."""
++    import math
++
++    from local_rag.embedder import HashEmbedder
++
++    def cosine(a: list[float], b: list[float]) -> float:
++        dot = sum(x * y for x, y in zip(a, b, strict=False))
++        norm_a = math.sqrt(sum(x * x for x in a)) or 1.0
++        norm_b = math.sqrt(sum(x * x for x in b)) or 1.0
++        return dot / (norm_a * norm_b)
++
++    emb = HashEmbedder(dim=128)
++    query = emb.embed(["the cat sat on the mat"])[0]
++    related = emb.embed(["a cat sat on a mat"])[0]
++    unrelated = emb.embed(["quantum physics dark matter"])[0]
++
++    sim_related = cosine(query, related)
++    sim_unrelated = cosine(query, unrelated)
++
++    assert sim_related > sim_unrelated, (
++        f"Expected related ({sim_related:.4f}) > unrelated ({sim_unrelated:.4f})"
++    )

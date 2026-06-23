@@ -1,0 +1,129 @@
+diff --git a/tests/test_vector_store.py b/tests/test_vector_store.py
+new file mode 100644
+index 0000000..d9fa5d2
+--- /dev/null
++++ b/tests/test_vector_store.py
+@@ -0,0 +1,123 @@
++"""Tests for the vector store."""
++
++import pytest
++
++
++def _make_chunks(n: int = 3):
++    from local_rag.ingestion import Chunk
++    return [
++        Chunk(chunk_id=f"c{i}", source="test.txt", text=f"chunk text {i}")
++        for i in range(n)
++    ]
++
++
++def _rand_vec(seed: int, dim: int = 8) -> list[float]:
++    import hashlib
++    import math
++    raw = hashlib.sha256(str(seed).encode()).digest()
++    floats = [float(b - 128) for b in raw[:dim]]
++    norm = math.sqrt(sum(x * x for x in floats)) or 1.0
++    return [x / norm for x in floats]
++
++
++def test_add_and_len():
++    from local_rag.vector_store import VectorStore
++    store = VectorStore()
++    chunks = _make_chunks(3)
++    vecs = [_rand_vec(i) for i in range(3)]
++    store.add(chunks, vecs)
++    assert len(store) == 3
++
++
++def test_search_returns_top_k():
++    from local_rag.vector_store import VectorStore
++    store = VectorStore()
++    chunks = _make_chunks(5)
++    vecs = [_rand_vec(i) for i in range(5)]
++    store.add(chunks, vecs)
++    results = store.search(_rand_vec(0), top_k=3)
++    assert len(results) == 3
++
++
++def test_search_scores_descending():
++    from local_rag.vector_store import VectorStore
++    store = VectorStore()
++    chunks = _make_chunks(5)
++    vecs = [_rand_vec(i) for i in range(5)]
++    store.add(chunks, vecs)
++    results = store.search(_rand_vec(0), top_k=5)
++    scores = [r.score for r in results]
++    assert scores == sorted(scores, reverse=True)
++
++
++def test_search_exact_match():
++    """Searching with the stored vector should return that chunk first."""
++    from local_rag.vector_store import VectorStore
++    store = VectorStore()
++    chunks = _make_chunks(3)
++    vecs = [_rand_vec(i) for i in range(3)]
++    store.add(chunks, vecs)
++    results = store.search(vecs[1], top_k=1)
++    assert results[0].chunk_id == "c1"
++    assert abs(results[0].score - 1.0) < 1e-6
++
++
++def test_search_empty_store():
++    from local_rag.vector_store import VectorStore
++    store = VectorStore()
++    results = store.search(_rand_vec(0))
++    assert results == []
++
++
++def test_add_mismatch_raises():
++    from local_rag.vector_store import VectorStore
++    store = VectorStore()
++    chunks = _make_chunks(2)
++    with pytest.raises(ValueError):
++        store.add(chunks, [[0.0]])
++
++
++def test_save_and_load(tmp_path):
++    from local_rag.vector_store import VectorStore
++    store = VectorStore()
++    chunks = _make_chunks(3)
++    vecs = [_rand_vec(i) for i in range(3)]
++    store.add(chunks, vecs)
++    save_path = tmp_path / "store.pkl"
++    store.save(save_path)
++    loaded = VectorStore.load(save_path)
++    assert len(loaded) == 3
++    results = loaded.search(vecs[0], top_k=1)
++    assert results[0].chunk_id == "c0"
++
++
++def test_clear():
++    from local_rag.vector_store import VectorStore
++    store = VectorStore()
++    chunks = _make_chunks(3)
++    vecs = [_rand_vec(i) for i in range(3)]
++    store.add(chunks, vecs)
++    assert len(store) == 3
++    store.clear()
++    assert len(store) == 0
++    assert store.search(_rand_vec(0)) == []
++
++
++def test_merge():
++    from local_rag.ingestion import Chunk
++    from local_rag.vector_store import VectorStore
++    store_a = VectorStore()
++    chunks_a = [Chunk(chunk_id="a0", source="a.txt", text="text a")]
++    vecs_a = [_rand_vec(0)]
++    store_a.add(chunks_a, vecs_a)
++
++    store_b = VectorStore()
++    chunks_b = [Chunk(chunk_id="b0", source="b.txt", text="text b")]
++    vecs_b = [_rand_vec(1)]
++    store_b.add(chunks_b, vecs_b)
++
++    store_a.merge(store_b)
++    assert len(store_a) == 2
++    ids = {r.chunk_id for r in store_a.search(_rand_vec(0), top_k=2)}
++    assert "a0" in ids
++    assert "b0" in ids

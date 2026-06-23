@@ -1,0 +1,84 @@
+diff --git a/tests/test_pipeline.py b/tests/test_pipeline.py
+new file mode 100644
+index 0000000..161242f
+--- /dev/null
++++ b/tests/test_pipeline.py
+@@ -0,0 +1,78 @@
++"""Tests for the RAG pipeline."""
++
++
++
++def _make_pipeline():
++    from local_rag.embedder import HashEmbedder
++    from local_rag.llm import MockLLM
++    from local_rag.pipeline import RAGPipeline
++    return RAGPipeline(embedder=HashEmbedder(), llm=MockLLM(response="Test answer."))
++
++
++def test_pipeline_ask_no_docs():
++    pipeline = _make_pipeline()
++    result = pipeline.ask("anything?")
++    assert "No documents" in result.answer
++    assert result.sources == []
++
++
++def test_pipeline_ingest_and_ask(tmp_path):
++    from local_rag.ingestion import Chunk
++    pipeline = _make_pipeline()
++    chunks = [
++        Chunk(chunk_id="c0", source="doc.txt", text="Python is a great language."),
++        Chunk(chunk_id="c1", source="doc.txt", text="RAG stands for retrieval-augmented generation."),
++    ]
++    pipeline.ingest(chunks)
++    result = pipeline.ask("What is Python?")
++    assert result.answer == "Test answer."
++    assert len(result.sources) >= 1
++
++
++def test_pipeline_ingest_file(tmp_path):
++    pipeline = _make_pipeline()
++    f = tmp_path / "test.txt"
++    f.write_text("Some content about AI and machine learning.", encoding="utf-8")
++    n = pipeline.ingest_file(str(f))
++    assert n >= 1
++    assert len(pipeline.store) == n
++
++
++def test_pipeline_sources_have_chunk_ids(tmp_path):
++    from local_rag.ingestion import Chunk
++    pipeline = _make_pipeline()
++    chunks = [Chunk(chunk_id=f"id{i}", source="s.txt", text=f"text {i}") for i in range(5)]
++    pipeline.ingest(chunks)
++    result = pipeline.ask("query")
++    for src in result.sources:
++        assert src.chunk_id.startswith("id")
++
++
++def test_pipeline_prompt_contains_question(tmp_path):
++    from local_rag.embedder import HashEmbedder
++    from local_rag.ingestion import Chunk
++    from local_rag.llm import MockLLM
++    from local_rag.pipeline import RAGPipeline
++    mock = MockLLM()
++    pipeline = RAGPipeline(embedder=HashEmbedder(), llm=mock)
++    chunks = [Chunk(chunk_id="x0", source="f.txt", text="Some context text.")]
++    pipeline.ingest(chunks)
++    pipeline.ask("What is the meaning of life?")
++    assert "What is the meaning of life?" in mock.last_prompt
++
++
++def test_pipeline_store_and_reload(tmp_path):
++    from local_rag.embedder import HashEmbedder
++    from local_rag.ingestion import Chunk
++    from local_rag.llm import MockLLM
++    from local_rag.pipeline import RAGPipeline
++    from local_rag.vector_store import VectorStore
++    pipeline = RAGPipeline(embedder=HashEmbedder(), llm=MockLLM())
++    chunks = [Chunk(chunk_id="p0", source="f.txt", text="Persistent text content.")]
++    pipeline.ingest(chunks)
++    save_path = tmp_path / "store.pkl"
++    pipeline.store.save(save_path)
++    pipeline2 = RAGPipeline(embedder=HashEmbedder(), llm=MockLLM())
++    pipeline2.store = VectorStore.load(save_path)
++    result = pipeline2.ask("query")
++    assert len(result.sources) >= 1

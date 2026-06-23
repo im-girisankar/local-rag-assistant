@@ -1,0 +1,142 @@
+diff --git a/tests/test_ingestion.py b/tests/test_ingestion.py
+new file mode 100644
+index 0000000..f7f21e1
+--- /dev/null
++++ b/tests/test_ingestion.py
+@@ -0,0 +1,136 @@
++"""Tests for file ingestion."""
++
++
++
++import pytest
++
++
++def test_split_text_basic():
++    from local_rag.ingestion import _split_text
++    windows = _split_text("hello world", chunk_size=5, overlap=1)
++    assert len(windows) > 0
++    # first window starts at 0
++    assert windows[0][0] == 0
++    assert windows[0][1] == "hello"
++
++
++def test_split_text_empty():
++    from local_rag.ingestion import _split_text
++    assert _split_text("") == []
++
++
++def test_ingest_file_txt(tmp_path):
++    from local_rag.ingestion import Chunk, ingest_file
++    f = tmp_path / "sample.txt"
++    f.write_text("This is a test document.\nWith multiple lines.", encoding="utf-8")
++    chunks = ingest_file(f)
++    assert len(chunks) >= 1
++    assert all(isinstance(c, Chunk) for c in chunks)
++    assert all(c.source == str(f) for c in chunks)
++
++
++def test_ingest_file_md(tmp_path):
++    from local_rag.ingestion import ingest_file
++    f = tmp_path / "notes.md"
++    f.write_text("# Title\n\nSome content here.", encoding="utf-8")
++    chunks = ingest_file(f)
++    assert len(chunks) >= 1
++
++
++def test_ingest_file_not_found():
++    from local_rag.ingestion import ingest_file
++    with pytest.raises(FileNotFoundError):
++        ingest_file("/nonexistent/file.txt")
++
++
++def test_ingest_file_unsupported_type(tmp_path):
++    from local_rag.ingestion import ingest_file
++    f = tmp_path / "data.csv"
++    f.write_text("a,b,c", encoding="utf-8")
++    with pytest.raises(ValueError):
++        ingest_file(f)
++
++
++def test_ingest_directory(tmp_path):
++    from local_rag.ingestion import ingest_directory
++    (tmp_path / "a.txt").write_text("Hello from A " * 20, encoding="utf-8")
++    (tmp_path / "b.md").write_text("Hello from B " * 20, encoding="utf-8")
++    (tmp_path / "skip.csv").write_text("ignore,this", encoding="utf-8")
++    chunks = ingest_directory(tmp_path)
++    sources = {c.source for c in chunks}
++    assert any("a.txt" in s for s in sources)
++    assert any("b.md" in s for s in sources)
++    assert not any("skip.csv" in s for s in sources)
++
++
++def test_chunk_ids_unique(tmp_path):
++    from local_rag.ingestion import ingest_file
++    long_text = "word " * 500
++    f = tmp_path / "long.txt"
++    f.write_text(long_text, encoding="utf-8")
++    chunks = ingest_file(f, chunk_size=100, overlap=10)
++    ids = [c.chunk_id for c in chunks]
++    assert len(ids) == len(set(ids))
++
++
++# ---------------------------------------------------------------------------
++# Regression tests for Fix 1 â€” input validation in _split_text
++# ---------------------------------------------------------------------------
++
++def test_chunk_overlap_gte_chunk_size_raises():
++    """overlap >= chunk_size must raise ValueError (infinite loop guard)."""
++    from local_rag.ingestion import _split_text
++
++    with pytest.raises(ValueError, match="overlap must be < chunk_size"):
++        _split_text("some text", chunk_size=10, overlap=10)
++
++    with pytest.raises(ValueError, match="overlap must be < chunk_size"):
++        _split_text("some text", chunk_size=10, overlap=20)
++
++
++def test_chunk_size_zero_or_negative_raises():
++    """chunk_size <= 0 must raise ValueError."""
++    from local_rag.ingestion import _split_text
++
++    with pytest.raises(ValueError, match="chunk_size must be > 0"):
++        _split_text("some text", chunk_size=0, overlap=0)
++
++    with pytest.raises(ValueError, match="chunk_size must be > 0"):
++        _split_text("some text", chunk_size=-5, overlap=0)
++
++
++def test_negative_overlap_raises():
++    """overlap < 0 must raise ValueError."""
++    from local_rag.ingestion import _split_text
++
++    with pytest.raises(ValueError, match="overlap must be >= 0"):
++        _split_text("some text", chunk_size=10, overlap=-1)
++
++
++# ---------------------------------------------------------------------------
++# Regression tests for Fix 2 â€” chunk_id uniqueness across files with same stem
++# ---------------------------------------------------------------------------
++
++def test_distinct_chunk_ids_for_same_stem(tmp_path):
++    """Files with the same stem but different directories must not collide on chunk_ids."""
++    from local_rag.ingestion import ingest_file
++
++    # Create two directories each containing a file called "notes.txt"
++    dir_a = tmp_path / "dir_a"
++    dir_b = tmp_path / "dir_b"
++    dir_a.mkdir()
++    dir_b.mkdir()
++
++    long_text = "word " * 300  # long enough to produce multiple chunks
++    (dir_a / "notes.txt").write_text(long_text, encoding="utf-8")
++    (dir_b / "notes.txt").write_text(long_text, encoding="utf-8")
++
++    chunks_a = ingest_file(dir_a / "notes.txt", chunk_size=100, overlap=10)
++    chunks_b = ingest_file(dir_b / "notes.txt", chunk_size=100, overlap=10)
++
++    ids_a = {c.chunk_id for c in chunks_a}
++    ids_b = {c.chunk_id for c in chunks_b}
++
++    # No chunk_id should appear in both sets
++    collisions = ids_a & ids_b
++    assert len(collisions) == 0, f"chunk_id collisions found: {collisions}"
