@@ -1,0 +1,5 @@
+# Core has no required dependencies.
+# Install optional extras:
+#   pip install -e ".[dev]"   # testing + linting
+#   pip install -e ".[ml]"    # sentence-transformers + faiss
+#   pip install -e ".[llm]"   # ollama
